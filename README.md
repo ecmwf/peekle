@@ -151,10 +151,20 @@ if isinstance(result, ClassObject):
    nodes to prevent infinite recursion.
 5. Calling `to_json()` on the root node recursively serialises the entire tree.
 
+## Support
+
+This software is developed by ECMWF and provided as open source under the Apache 2.0 licence on a **best-effort** basis with **no formal support**.
+
+- ECMWF does **not** provide operational support for this package.
+- Bug reports and feature requests can be submitted via [GitHub Issues](https://github.com/ecmwf/peekle/issues).
+- For general enquiries about ECMWF software, please contact the [ECMWF Service Desk](https://support.ecmwf.int).
+
+Contributions are welcome — please see the [CONTRIBUTORS](CONTRIBUTORS) file and ensure any pull request includes documentation and tests.
+
 ## Licence
 
 ```
-Copyright 2026, European Centre for Medium Range Weather Forecasts.
+Copyright 2026- European Centre for Medium-Range Weather Forecasts (ECMWF).
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
