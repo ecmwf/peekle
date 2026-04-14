@@ -39,6 +39,11 @@ dynamic = [
 dependencies = [
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools_scm]
 version_file = "src/peekle/_version.py"
