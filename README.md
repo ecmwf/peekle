@@ -16,6 +16,11 @@
 
 **Peekle** peeks into pickle files without importing unknown dependencies.
 
+You can use it to:
+
+- See what is in a pickled file even if you do not have the code of the pickled object.
+- Inspect a pickled file to find out its dependencies.
+
 ## Installation
 
 ```bash
