@@ -43,7 +43,7 @@ import types
 builtin_modules = set(sys.builtin_module_names)
 std_lib_path = sysconfig.get_paths()["stdlib"]
 
-stdlib_modules = set(module.name for module in pkgutil.iter_modules([std_lib_path]))
+stdlib_modules = {module.name for module in pkgutil.iter_modules([std_lib_path])}
 extra_modules = {"__builtin__"}
 
 # The complete set of module names that should be resolved normally by the
@@ -427,7 +427,9 @@ class PeekleObjectProvider:
         Raises:
             NotImplementedError: Always – subclasses must override this method.
         """
-        raise NotImplementedError(f"This method should be implemented in subclasses ({self.__class__.__name__})")
+        raise NotImplementedError(
+            f"This method should be implemented in subclasses ({self.__class__.__name__})"
+        )
 
 
 class Base:
@@ -501,7 +503,7 @@ class ClassMixin(PeekleObjectProvider):
     @property
     def name(self):
         """Fully-qualified class name, e.g. ``"mymodule.MyClass"``."""
-        return f'{self.__module__}.{self.__class__.__name__.split("/")[0]}'
+        return f"{self.__module__}.{self.__class__.__name__.split('/')[0]}"
 
     def _peekle_object(self, maker):
         """Convert this instance to a :class:`ClassObject`.
@@ -515,7 +517,9 @@ class ClassMixin(PeekleObjectProvider):
             ClassObject: A node capturing the class name and its members.
         """
 
-        members = maker({k: v for k, v in self.__dict__.items() if not k.startswith("__")})
+        members = maker(
+            {k: v for k, v in self.__dict__.items() if not k.startswith("__")}
+        )
         return ClassObject(self.name, members)
 
     def __setitem__(self, key, value):
@@ -561,7 +565,7 @@ class FunctionMixin(PeekleObjectProvider):
             invocation details.
         """
 
-        name = f'{self.__module__}.{self.__class__.__name__.split("/")[0]}'
+        name = f"{self.__module__}.{self.__class__.__name__.split('/')[0]}"
 
         return FunctionObject(
             name,
@@ -690,7 +694,11 @@ class PeekleUnpickler(pickle.Unpickler):
 
         sub_classes = {}
 
-        base_class = type(class_name, (Base,), {"__module__": module_name, "_sub_classes": sub_classes})
+        base_class = type(
+            class_name,
+            (Base,),
+            {"__module__": module_name, "_sub_classes": sub_classes},
+        )
         setattr(module, class_name, base_class)
 
         class_helper = type(
@@ -701,7 +709,9 @@ class PeekleUnpickler(pickle.Unpickler):
         setattr(module, class_name + "/peekle_class", class_helper)
 
         function_helper = type(
-            class_name + "/peekle_function", (base_class, FunctionMixin), {"__module__": module_name}
+            class_name + "/peekle_function",
+            (base_class, FunctionMixin),
+            {"__module__": module_name},
         )
         setattr(module, class_name + "/peekle_function", function_helper)
 
@@ -907,9 +917,10 @@ class PeekleObjectMaker:
             return self._cache[id(obj)]
 
         with self.visit(obj) as maker:
-
             if isinstance(obj, dict):
-                return maker.cache(obj, DictObject({maker(k): maker(v) for k, v in obj.items()}))
+                return maker.cache(
+                    obj, DictObject({maker(k): maker(v) for k, v in obj.items()})
+                )
 
             if isinstance(obj, list):
                 return maker.cache(obj, ListOject([maker(i) for i in obj]))

@@ -10,8 +10,7 @@
   </a>
 </p>
 
-
-> \[!IMPORTANT\]
+> [!IMPORTANT]
 > This software is **Emerging** and subject to ECMWF's guidelines on [Software Maturity](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity).
 
 **Peekle** peeks into pickle files without importing unknown dependencies.
@@ -51,7 +50,7 @@ Parse a binary pickle file and return the root `PeekleObject`.
 
 **Returns** `PeekleObject` — the root of the object tree.
 
----
+______________________________________________________________________
 
 ### `.to_json(**kwargs)`
 
@@ -141,15 +140,15 @@ if isinstance(result, ClassObject):
 
 1. `Peekle.parse()` opens the pickle stream with `PeekleUnpickler`, a subclass
    of `pickle.Unpickler`.
-2. Whenever the unpickler encounters a class from outside the standard library,
+1. Whenever the unpickler encounters a class from outside the standard library,
    `PeekleUnpickler.find_class()` dynamically creates a stub class instead of
-   importing the real one.  Stubs are cached and reused across calls.
-3. The loaded Python object (which may contain stub instances, dicts, lists,
+   importing the real one. Stubs are cached and reused across calls.
+1. The loaded Python object (which may contain stub instances, dicts, lists,
    etc.) is passed to `PeekleObjectMaker`, which walks the object graph and
    wraps every node in the appropriate `PeekleObject` subclass.
-4. Circular references are detected during the walk and represented as `Loop`
+1. Circular references are detected during the walk and represented as `Loop`
    nodes to prevent infinite recursion.
-5. Calling `to_json()` on the root node recursively serialises the entire tree.
+1. Calling `to_json()` on the root node recursively serialises the entire tree.
 
 ## Support
 
