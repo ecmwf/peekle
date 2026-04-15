@@ -1,25 +1,10 @@
-
 [build-system]
 requires = [
   "setuptools>=69",
-  "setuptools-scm>=8",
+  "setuptools-scm>=8"
 ]
 
 [project]
-name = "peekle"
-
-description = "Peek into pickle files without importing unknown dependencies"
-keywords = [
-  "pickle",
-  "serialization",
-  "deserialization",
-]
-
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-
-requires-python = ">=3.9"
-
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -30,14 +15,23 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
-]
-
-dynamic = [
-  "version",
+  "Programming Language :: Python :: Implementation :: PyPy"
 ]
 dependencies = [
 ]
+description = "Peek into pickle files without importing unknown dependencies"
+dynamic = [
+  "version"
+]
+keywords = [
+  "pickle",
+  "serialization",
+  "deserialization"
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+name = "peekle"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
@@ -46,5 +40,5 @@ test = ["pytest>=7"]
 testpaths = ["tests"]
 
 [tool.setuptools_scm]
-version_file = "src/peekle/_version.py"
 fallback_version = "0.0.0"
+version_file = "src/peekle/_version.py"
