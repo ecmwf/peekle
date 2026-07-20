@@ -33,11 +33,13 @@ license-files = ["LICENSE"]
 name = "peekle"
 readme = "README.md"
 requires-python = ">=3.9"
-urls.Homepage = "https://github.com/ecmwf/peekle/"
-urls.Repository = "https://github.com/ecmwf/peekle/"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/ecmwf/peekle/"
+Repository = "https://github.com/ecmwf/peekle/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
