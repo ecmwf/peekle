@@ -32,6 +32,7 @@ Example::
     print(json.dumps(result.to_json(), indent=2))
 """
 
+import base64
 import contextlib
 import pickle
 import pkgutil
@@ -217,7 +218,7 @@ class TypeObject(PeekleObject):
         if function_calls:
             return f"{self.value.__module__}.{self.value.__name__}"
 
-        return dict(type=self.value.__name__, module=self.value.__module__)
+        return {"type": self.value.__name__, "module": self.value.__module__}
 
 
 class BytesObject(PeekleObject):
@@ -250,9 +251,12 @@ class BytesObject(PeekleObject):
             return f"bytes({len(self.value):,})"
 
         if shorten_bytes:
-            return dict(bytes=self.value[:10].decode("utf-8", errors="ignore") + "...")
+            return {"bytes": self.value[:10].decode("utf-8", errors="ignore") + "..."}
         else:
-            return dict(bytes=self.value.decode("utf-8"))
+            try:
+                return {"bytes": self.value.decode("utf-8")}
+            except UnicodeDecodeError:
+                return {"bytes": base64.b64encode(self.value).decode("utf-8")}
 
 
 class AttributeObject(PeekleObject):
@@ -279,7 +283,7 @@ class AttributeObject(PeekleObject):
         Returns:
             dict: A ``{"attribute": ...}`` dict.
         """
-        return dict(attribute=self.name.to_json(**kwargs))
+        return {"attribute": self.name.to_json(**kwargs)}
 
 
 class ClassObject(PeekleObject):
@@ -378,7 +382,7 @@ class PersistentObject(PeekleObject):
         Returns:
             dict: A ``{"id": ...}`` dict.
         """
-        return dict(id=self.id.to_json(**kwargs))
+        return {"id": self.id.to_json(**kwargs)}
 
 
 class UnsupportedObject(PeekleObject):
@@ -405,7 +409,9 @@ class UnsupportedObject(PeekleObject):
             dict: A diagnostic dict containing the type name and ``repr()``
             of the unsupported object.
         """
-        return {"unsupported": dict(type=type(self.obj).__name__, value=repr(self.obj))}
+        return {
+            "unsupported": {"type": type(self.obj).__name__, "value": repr(self.obj)}
+        }
 
 
 class PeekleObjectProvider:
@@ -517,8 +523,19 @@ class ClassMixin(PeekleObjectProvider):
             ClassObject: A node capturing the class name and its members.
         """
 
-        members = maker(
-            {k: v for k, v in self.__dict__.items() if not k.startswith("__")}
+        # Build the DictObject directly instead of routing the throwaway
+        # comprehension dict through ``maker``.  That dict has no other
+        # reference once we return, so its ``id()`` would be freed and later
+        # reused by another module's transient dict, causing a false hit in
+        # ``PeekleObjectMaker``'s id-keyed cache (one module inheriting
+        # another's members).  The member values are real, persistent pickle
+        # objects, so wrapping them through ``maker`` is still safe.
+        members = DictObject(
+            {
+                maker(k): maker(v)
+                for k, v in self.__dict__.items()
+                if not k.startswith("__")
+            }
         )
         return ClassObject(self.name, members)
 
@@ -834,6 +851,13 @@ class PeekleObjectMaker:
         self._cache = {}
         self._depth = 0
         self._busy = {}
+        # Strong references to every object used as a cache key.  The cache is
+        # keyed by ``id(obj)``; without pinning the keys, a transient object
+        # (e.g. an inline-built container) can be freed and its address reused
+        # by a later, unrelated object, producing a false cache hit.  Holding
+        # the keys alive for the maker's lifetime makes ``id()`` collisions
+        # impossible.
+        self._keep = []
 
     @contextlib.contextmanager
     def visit(self, obj):
@@ -882,6 +906,7 @@ class PeekleObjectMaker:
             PeekleObject: *peekle_object* unchanged (for chaining).
         """
         self._cache[id(obj)] = peekle_object
+        self._keep.append(obj)  # pin the key so its id() can't be reused
         return peekle_object
 
     def __call__(self, obj):
