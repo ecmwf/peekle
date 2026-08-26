@@ -37,6 +37,9 @@ requires-python = ">=3.9"
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
+[project.scripts]
+peekle = "peekle.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/ecmwf/peekle/"
 Repository = "https://github.com/ecmwf/peekle/"

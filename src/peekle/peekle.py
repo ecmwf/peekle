@@ -32,19 +32,16 @@ Example::
     print(json.dumps(result.to_json(), indent=2))
 """
 
+import ast
 import base64
 import contextlib
 import pickle
-import pkgutil
 import sys
-import sysconfig
 import textwrap
 import types
 
 builtin_modules = set(sys.builtin_module_names)
-std_lib_path = sysconfig.get_paths()["stdlib"]
-
-stdlib_modules = {module.name for module in pkgutil.iter_modules([std_lib_path])}
+stdlib_modules = set(sys.stdlib_module_names)
 extra_modules = {"__builtin__"}
 
 # The complete set of module names that should be resolved normally by the
@@ -60,6 +57,24 @@ class PeekleObject:
     to serialise their value to a plain Python structure safe to pass to
     :func:`json.dumps`.
     """
+
+    def to_python(self, **kwargs):
+        """Convert to a python code representation of the deserialised instance."""
+
+        code = self.to_code()
+        try:
+            from black import FileMode, format_str
+
+            code = format_str(code, mode=FileMode())
+        except ImportError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"Warning: black failed to format code, returning unformatted code. {e}",
+                file=sys.stderr,
+            )
+
+        return code
 
 
 class LiteralObject(PeekleObject):
@@ -101,6 +116,21 @@ class LiteralObject(PeekleObject):
     def __str__(self):
         return str(self.value)
 
+    def to_code(self):
+        """Write a Python code representation of the literal value."""
+
+        if isinstance(self.value, (type(None), bool, int, float, str, type(Ellipsis))):
+            return repr(self.value)
+
+        try:
+            value = ast.parse(repr(self.value), mode="eval")
+            value = ast.fix_missing_locations(value)
+            value = ast.unparse(value)
+        except SyntaxError:
+            value = repr(repr(self.value))
+
+        return value
+
 
 class DictObject(PeekleObject):
     """A :class:`PeekleObject` that represents a :class:`dict`.
@@ -124,6 +154,17 @@ class DictObject(PeekleObject):
         """
         return {str(k): v.to_json(**kwargs) for k, v in self.value.items()}
 
+    def to_code(self, **kwargs):
+        """Write a Python code representation of the dictionary."""
+        return (
+            "{"
+            + ",\n".join(
+                f"{k.to_code(**kwargs)}: {v.to_code(**kwargs)}"
+                for k, v in self.value.items()
+            )
+            + "}"
+        )
+
 
 class ListOject(PeekleObject):
     """A :class:`PeekleObject` that represents a :class:`list`.
@@ -143,6 +184,10 @@ class ListOject(PeekleObject):
             list: A plain Python list.
         """
         return [v.to_json(**kwargs) for v in self.value]
+
+    def to_code(self, **kwargs):
+        """Write a Python code representation of the list."""
+        return "[" + ",\n".join(v.to_code(**kwargs) for v in self.value) + "]"
 
 
 class TupleObject(PeekleObject):
@@ -165,6 +210,15 @@ class TupleObject(PeekleObject):
         """
         return [v.to_json(**kwargs) for v in self.value]
 
+    def to_code(self):
+        """Write a Python code representation of the tuple."""
+        return (
+            "("
+            + ",\n".join(v.to_code() for v in self.value)
+            + ("," if len(self.value) == 1 else "")
+            + ")"
+        )
+
 
 class SetObject(PeekleObject):
     """A :class:`PeekleObject` that represents a :class:`set`.
@@ -185,6 +239,12 @@ class SetObject(PeekleObject):
             list: A plain Python list representing the set contents.
         """
         return [v.to_json(**kwargs) for v in self.value]
+
+    def to_code(self):
+        """Write a Python code representation of the set."""
+        if not self.value:
+            return "set()"
+        return "{" + ",\n".join(v.to_code() for v in self.value) + "}"
 
 
 class TypeObject(PeekleObject):
@@ -219,6 +279,10 @@ class TypeObject(PeekleObject):
             return f"{self.value.__module__}.{self.value.__name__}"
 
         return {"type": self.value.__name__, "module": self.value.__module__}
+
+    def to_code(self):
+        """Write a Python code representation of the type."""
+        return f"{self.value.__module__}.{self.value.__name__}"
 
 
 class BytesObject(PeekleObject):
@@ -258,6 +322,10 @@ class BytesObject(PeekleObject):
             except UnicodeDecodeError:
                 return {"bytes": base64.b64encode(self.value).decode("utf-8")}
 
+    def to_code(self):
+        """Write a Python code representation of the bytes."""
+        return repr(self.value)
+
 
 class AttributeObject(PeekleObject):
     """A :class:`PeekleObject` that represents an unknown class attribute.
@@ -285,6 +353,10 @@ class AttributeObject(PeekleObject):
         """
         return {"attribute": self.name.to_json(**kwargs)}
 
+    def to_code(self, **kwargs):
+        """Write a Python code representation of the attribute access."""
+        return f"Attribute({self.name.to_code(**kwargs)})"
+
 
 class ClassObject(PeekleObject):
     """A :class:`PeekleObject` representing a deserialised instance of an
@@ -307,6 +379,14 @@ class ClassObject(PeekleObject):
             dict: A single-key dict mapping the class name to its members.
         """
         return {self.name: self.members.to_json(**kwargs)}
+
+    def to_code(self):
+        """Convert to a python code representation of the deserialised instance."""
+        return (
+            f"{self.name}("
+            + ",\n".join(f"{k}={v.to_code()}" for k, v in self.members.value.items())
+            + ")"
+        )
 
 
 class FunctionObject(PeekleObject):
@@ -360,6 +440,9 @@ class FunctionObject(PeekleObject):
             "state": self.state.to_json(**kwargs),
         }
 
+    def to_code(self, **kwargs):
+        return f"{self.name}({', '.join([v.to_code() for v in self.args.value] + [f'{k}={v.to_code()}' for k, v in self.kwargs.value.items()])})"
+
 
 class PersistentObject(PeekleObject):
     """A :class:`PeekleObject` representing a *persistent ID* reference.
@@ -383,6 +466,9 @@ class PersistentObject(PeekleObject):
             dict: A ``{"id": ...}`` dict.
         """
         return {"id": self.id.to_json(**kwargs)}
+
+    def to_code(self, **kwargs):
+        return self.id.to_code()
 
 
 class UnsupportedObject(PeekleObject):
@@ -413,6 +499,10 @@ class UnsupportedObject(PeekleObject):
             "unsupported": {"type": type(self.obj).__name__, "value": repr(self.obj)}
         }
 
+    def to_code(self, **kwargs):
+        """Write a Python code representation of the unsupported object."""
+        return f"UnsupportedObject({repr(repr(self.obj))})"
+
 
 class PeekleObjectProvider:
     """Interface for internal stub objects that can produce a
@@ -431,7 +521,7 @@ class PeekleObjectProvider:
                 recursively converting child values.
 
         Raises:
-            NotImplementedError: Always – subclasses must override this method.
+            NotImplementedError: Always - subclasses must override this method.
         """
         raise NotImplementedError(
             f"This method should be implemented in subclasses ({self.__class__.__name__})"
@@ -444,10 +534,10 @@ class Base:
     When :class:`PeekleUnpickler` encounters an unknown class it creates a
     dynamic subclass of ``Base`` along with two helper variants:
 
-    * a *class* variant (mixes in :class:`ClassMixin`) – used when the object
+    * a *class* variant (mixes in :class:`ClassMixin`) - used when the object
       is unpickled without constructor arguments (typical ``__setstate__``
       path).
-    * a *function* variant (mixes in :class:`FunctionMixin`) – used when the
+    * a *function* variant (mixes in :class:`FunctionMixin`) - used when the
       object's ``__reduce__`` returns positional or keyword arguments.
 
     ``__new__`` inspects the constructor arguments and dispatches to the
@@ -551,6 +641,10 @@ class FunctionMixin(PeekleObjectProvider):
     reconstruction requires passing arguments to a callable.
     """
 
+    _args = ()
+    _kwargs = {}
+    _state = {}
+
     def __init__(self, *args, **kwargs):
         """Record constructor arguments for later inspection.
 
@@ -642,7 +736,7 @@ class Attribute(PeekleObjectProvider):
         return {"__class__": self.__class__.__name__, "name": self.name}
 
     def __call__(self, *args, **kwds):
-        """No-op callable – allows attribute calls to silently succeed."""
+        """No-op callable - allows attribute calls to silently succeed."""
         pass
         # print(f"DummyAttribute({self.name})({args}, {kwds})")
 
@@ -687,12 +781,12 @@ class PeekleUnpickler(pickle.Unpickler):
 
         For each unknown class three dynamic types are created:
 
-        1. A *base class* – a direct subclass of :class:`Base` carrying the
+        1. A *base class* - a direct subclass of :class:`Base` carrying the
            module/class name.
-        2. A *class helper* – subclasses both the base class and
+        2. A *class helper* - subclasses both the base class and
            :class:`ClassMixin`; used when the object is restored via
            ``__setstate__``.
-        3. A *function helper* – subclasses both the base class and
+        3. A *function helper* - subclasses both the base class and
            :class:`FunctionMixin`; used when the object is reconstructed via
            a callable invocation.
 
@@ -811,6 +905,9 @@ class Loop(PeekleObject):
         """
         return self
 
+    def __repr__(self):
+        return f"loop_{id(self.obj)}"
+
     def cache(self, obj, peekle_object):
         """Discard any cache attempt inside the loop and return the object as-is.
 
@@ -826,12 +923,16 @@ class Loop(PeekleObject):
             dict: A ``{"loop": {"id": ..., "type": ..., "value": ...}}`` dict.
         """
         return {
-            "loop": dict(
-                id=id(self.obj),
-                type=type(self.obj).__name__,
-                value=repr(self.obj),
-            )
+            "loop": {
+                "id": id(self.obj),
+                "type": type(self.obj).__name__,
+                "value": repr(self.obj),
+            }
         }
+
+    def to_code(self, **kwargs):
+        """Write a Python code representation of the loop marker."""
+        return f"Loop(id={id(self.obj)}, type={repr(type(self.obj).__name__)}, value={repr(repr(self.obj))})"
 
 
 class PeekleObjectMaker:
