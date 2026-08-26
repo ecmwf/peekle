@@ -32,6 +32,7 @@ Example::
     print(json.dumps(result.to_json(), indent=2))
 """
 
+import ast
 import base64
 import contextlib
 import pickle
@@ -117,7 +118,18 @@ class LiteralObject(PeekleObject):
 
     def to_code(self):
         """Write a Python code representation of the literal value."""
-        return repr(self.value)
+
+        if isinstance(self.value, (type(None), bool, int, float, str, type(Ellipsis))):
+            return repr(self.value)
+
+        try:
+            value = ast.parse(repr(self.value), mode="eval")
+            value = ast.fix_missing_locations(value)
+            value = ast.unparse(value)
+        except SyntaxError:
+            value = repr(repr(self.value))
+
+        return value
 
 
 class DictObject(PeekleObject):
@@ -489,7 +501,7 @@ class UnsupportedObject(PeekleObject):
 
     def to_code(self, **kwargs):
         """Write a Python code representation of the unsupported object."""
-        return f"UnsupportedObject({repr(self.obj)})"
+        return f"UnsupportedObject({repr(repr(self.obj))})"
 
 
 class PeekleObjectProvider:

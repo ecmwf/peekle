@@ -177,3 +177,5 @@ cython_debug/
 ?/
 src/peekle/_version.py
 *.swp
+.vscode/settings.json
+*.ckpt

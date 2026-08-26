@@ -11,7 +11,9 @@
 
 import argparse
 import json
+import os, io
 import sys
+import zipfile
 
 from .peekle import Peekle
 
@@ -29,6 +31,12 @@ def make_parser():
     parser = argparse.ArgumentParser(
         prog="peekle",
         description="Peek into pickle files without importing unknown dependencies.",
+    )
+
+    parser.add_argument(
+        "--torch",
+        action="store_true",
+        help="Extract pickled PyTorch model from a checkpoint file",
     )
 
     output = parser.add_mutually_exclusive_group()
@@ -74,8 +82,21 @@ def main(argv=None):
     if args.python and any(kwargs.values()):
         parser.error("formatting options are only supported with --json")
 
-    with open(args.path, "rb") as f:
-        result = Peekle.parse(f)
+    if args.torch:
+        with zipfile.ZipFile(args.path, "r") as zipf:
+            data_files = [
+                name for name in zipf.namelist() if os.path.basename(name) == "data.pkl"
+            ]
+            if len(data_files) == 0:
+                raise FileNotFoundError(f"Could not find 'data.pkl' in {args.path}.")
+            if len(data_files) > 1:
+                raise ValueError(f"Found two or more 'data.pkl' in {args.path}.")
+            data = zipf.read(data_files[0])
+
+        result = Peekle.parse(io.BytesIO(data))
+    else:
+        with open(args.path, "rb") as f:
+            result = Peekle.parse(f)
 
     if args.python:
         print(result.to_python())
