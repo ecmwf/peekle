@@ -52,3 +52,30 @@ def test_class_object_json():
             "tags": ["a", "b", "c"],
         }
     }
+
+
+class SampleFunction:
+    """A stand-in for a class whose *attribute* is referenced in a pickle.
+
+    Pickles produced by e.g. :class:`torch.autograd.Function` subclasses store
+    ``getattr(SomeClass, "apply")``.  When peekle stubs ``SomeClass`` it becomes
+    a synthesised type, so ``getattr`` must resolve against the stub *class*.
+    """
+
+
+class ReferencesClassAttribute:
+    """Pickles as ``getattr(SampleFunction, "apply")``."""
+
+    def __reduce__(self):
+        return (getattr, (SampleFunction, "apply"))
+
+
+def test_class_attribute_getattr():
+    # Regression test: peekle used to raise
+    #   AttributeError: type object 'SampleFunction' has no attribute 'apply'
+    # because attribute access on a stub *class* (not instance) was unhandled.
+    result = Peekle.parse(_pickle(ReferencesClassAttribute()))
+    data = result.to_json()
+
+    expected = f"{SampleFunction.__module__}.SampleFunction.apply"
+    assert data == {"attribute": expected}

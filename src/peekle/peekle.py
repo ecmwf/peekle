@@ -528,7 +528,28 @@ class PeekleObjectProvider:
         )
 
 
-class Base:
+class StubMeta(type):
+    """Metaclass for synthesised stub classes.
+
+    Attribute access on a stub *class* (rather than an instance) is resolved
+    to an :class:`Attribute` placeholder instead of raising
+    :class:`AttributeError`.  This mirrors :meth:`ClassMixin.__getattr__`,
+    which does the same for instances, and is needed because pickles can
+    reference class attributes directly - e.g. a ``getattr(cls, "apply")``
+    reduction such as ``getattr(GraphTransformerFunction, "apply")`` produced
+    by :mod:`torch.autograd.Function` subclasses.
+
+    Dunder names are excluded so normal class machinery (``__new__``,
+    ``__mro_entries__``, copy/pickle hooks, ...) keeps working.
+    """
+
+    def __getattr__(cls, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return Attribute(f"{cls.__module__}.{cls.__name__.split('/')[0]}.{name}")
+
+
+class Base(metaclass=StubMeta):
     """Dynamic base class used for synthesised stub classes.
 
     When :class:`PeekleUnpickler` encounters an unknown class it creates a
