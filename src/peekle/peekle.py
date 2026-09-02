@@ -48,6 +48,39 @@ extra_modules = {"__builtin__"}
 # standard unpickler rather than replaced with stubs.
 BUILTIN_PACKAGES = builtin_modules | stdlib_modules | extra_modules
 
+# One level of indentation used when emitting Python code.
+_INDENT = "    "
+
+
+def _block(open_ch, close_ch, items):
+    """Render *items* as an indented, bracketed block of Python code.
+
+    Produces output in the style :mod:`black` would emit, e.g.::
+
+        [
+            item0,
+            item1,
+        ]
+
+    Each entry of *items* is itself a (possibly multi-line) code string; every
+    line is indented by one level, so nested blocks stay correctly aligned.
+    An empty *items* collapses to ``open_ch + close_ch`` (e.g. ``()``).
+
+    Args:
+        open_ch (str): Opening delimiter (``"("``, ``"["`` or ``"{"``).
+        close_ch (str): Matching closing delimiter.
+        items (list[str]): Already-rendered code for each element.
+
+    Returns:
+        str: The rendered block.
+    """
+
+    if not items:
+        return open_ch + close_ch
+
+    body = ",\n".join(items)
+    return open_ch + "\n" + textwrap.indent(body, _INDENT) + ",\n" + close_ch
+
 
 class PeekleObject:
     """Base class for all nodes in a peekle object tree.
@@ -59,22 +92,13 @@ class PeekleObject:
     """
 
     def to_python(self, **kwargs):
-        """Convert to a python code representation of the deserialised instance."""
+        """Convert to a python code representation of the deserialised instance.
 
-        code = self.to_code()
-        try:
-            from black import FileMode, format_str
+        The :meth:`to_code` implementations already emit correctly-indented,
+        :mod:`black`-style output, so no external formatter is required.
+        """
 
-            code = format_str(code, mode=FileMode())
-        except ImportError:
-            pass
-        except Exception as e:  # noqa: BLE001
-            print(
-                f"Warning: black failed to format code, returning unformatted code. {e}",
-                file=sys.stderr,
-            )
-
-        return code
+        return self.to_code()
 
 
 class LiteralObject(PeekleObject):
@@ -154,15 +178,12 @@ class DictObject(PeekleObject):
         """
         return {str(k): v.to_json(**kwargs) for k, v in self.value.items()}
 
-    def to_code(self, **kwargs):
+    def to_code(self):
         """Write a Python code representation of the dictionary."""
-        return (
-            "{"
-            + ",\n".join(
-                f"{k.to_code(**kwargs)}: {v.to_code(**kwargs)}"
-                for k, v in self.value.items()
-            )
-            + "}"
+        return _block(
+            "{",
+            "}",
+            [f"{k.to_code()}: {v.to_code()}" for k, v in self.value.items()],
         )
 
 
@@ -185,9 +206,9 @@ class ListOject(PeekleObject):
         """
         return [v.to_json(**kwargs) for v in self.value]
 
-    def to_code(self, **kwargs):
+    def to_code(self):
         """Write a Python code representation of the list."""
-        return "[" + ",\n".join(v.to_code(**kwargs) for v in self.value) + "]"
+        return _block("[", "]", [v.to_code() for v in self.value])
 
 
 class TupleObject(PeekleObject):
@@ -212,12 +233,9 @@ class TupleObject(PeekleObject):
 
     def to_code(self):
         """Write a Python code representation of the tuple."""
-        return (
-            "("
-            + ",\n".join(v.to_code() for v in self.value)
-            + ("," if len(self.value) == 1 else "")
-            + ")"
-        )
+        # ``_block`` always emits a trailing comma, which also makes a
+        # single-element tuple render correctly (``(x,)``).
+        return _block("(", ")", [v.to_code() for v in self.value])
 
 
 class SetObject(PeekleObject):
@@ -244,7 +262,7 @@ class SetObject(PeekleObject):
         """Write a Python code representation of the set."""
         if not self.value:
             return "set()"
-        return "{" + ",\n".join(v.to_code() for v in self.value) + "}"
+        return _block("{", "}", [v.to_code() for v in self.value])
 
 
 class TypeObject(PeekleObject):
@@ -353,9 +371,9 @@ class AttributeObject(PeekleObject):
         """
         return {"attribute": self.name.to_json(**kwargs)}
 
-    def to_code(self, **kwargs):
+    def to_code(self):
         """Write a Python code representation of the attribute access."""
-        return f"Attribute({self.name.to_code(**kwargs)})"
+        return f"Attribute({self.name.to_code()})"
 
 
 class ClassObject(PeekleObject):
@@ -382,10 +400,10 @@ class ClassObject(PeekleObject):
 
     def to_code(self):
         """Convert to a python code representation of the deserialised instance."""
-        return (
-            f"{self.name}("
-            + ",\n".join(f"{k}={v.to_code()}" for k, v in self.members.value.items())
-            + ")"
+        return self.name + _block(
+            "(",
+            ")",
+            [f"{k}={v.to_code()}" for k, v in self.members.value.items()],
         )
 
 
@@ -440,8 +458,11 @@ class FunctionObject(PeekleObject):
             "state": self.state.to_json(**kwargs),
         }
 
-    def to_code(self, **kwargs):
-        return f"{self.name}({', '.join([v.to_code() for v in self.args.value] + [f'{k}={v.to_code()}' for k, v in self.kwargs.value.items()])})"
+    def to_code(self):
+        """Write a Python code representation of the callable invocation."""
+        items = [v.to_code() for v in self.args.value]
+        items += [f"{k}={v.to_code()}" for k, v in self.kwargs.value.items()]
+        return self.name + _block("(", ")", items)
 
 
 class PersistentObject(PeekleObject):
@@ -467,7 +488,8 @@ class PersistentObject(PeekleObject):
         """
         return {"id": self.id.to_json(**kwargs)}
 
-    def to_code(self, **kwargs):
+    def to_code(self):
+        """Write a Python code representation of the persistent ID."""
         return self.id.to_code()
 
 
@@ -499,7 +521,7 @@ class UnsupportedObject(PeekleObject):
             "unsupported": {"type": type(self.obj).__name__, "value": repr(self.obj)}
         }
 
-    def to_code(self, **kwargs):
+    def to_code(self):
         """Write a Python code representation of the unsupported object."""
         return f"UnsupportedObject({repr(repr(self.obj))})"
 
@@ -951,7 +973,7 @@ class Loop(PeekleObject):
             }
         }
 
-    def to_code(self, **kwargs):
+    def to_code(self):
         """Write a Python code representation of the loop marker."""
         return f"Loop(id={id(self.obj)}, type={repr(type(self.obj).__name__)}, value={repr(repr(self.obj))})"
 

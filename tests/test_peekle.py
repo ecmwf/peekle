@@ -10,6 +10,7 @@
 
 """Tests for peekle — safe pickle inspection."""
 
+import ast
 import io
 import pickle
 
@@ -79,3 +80,17 @@ def test_class_attribute_getattr():
 
     expected = f"{SampleFunction.__module__}.SampleFunction.apply"
     assert data == {"attribute": expected}
+
+
+def test_to_python_is_indented_and_valid():
+    obj = SampleModel(value=42, label="hello", tags=["a", "b", "c"])
+    code = Peekle.parse(_pickle(obj)).to_python()
+
+    # No external formatter (black) is used, yet the output must be valid,
+    # correctly-indented Python.
+    ast.parse(code)
+    assert "\n    tags=[\n        'a',\n        'b',\n        'c',\n    ],\n" in code
+    # Every continuation line is a multiple of four spaces of indentation.
+    for line in code.splitlines():
+        stripped = line.lstrip(" ")
+        assert (len(line) - len(stripped)) % 4 == 0
