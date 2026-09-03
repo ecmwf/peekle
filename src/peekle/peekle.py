@@ -121,6 +121,18 @@ class PeekleObject:
         """
         return None
 
+    def class_names(self):
+        """Return the sorted, de-duplicated class names referenced in the tree.
+
+        Walks this node and all its descendants, collecting the dotted name
+        returned by :meth:`class_name` for every node that denotes a class.
+
+        Returns:
+            list[str]: The unique class names, sorted alphabetically.
+        """
+        names = {name for node in self.walk() if (name := node.class_name())}
+        return sorted(names)
+
 
 class LiteralObject(PeekleObject):
     """A :class:`PeekleObject` that wraps a primitive literal value.

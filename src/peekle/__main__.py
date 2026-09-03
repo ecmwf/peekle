@@ -104,9 +104,7 @@ def main(argv=None):
             result = Peekle.parse(f)
 
     if args.classes:
-        names = {name for node in result.walk() if (name := node.class_name())}
-        for name in sorted(names):
-            print(name)
+        print("\n".join(result.class_names()))
     elif args.python:
         print(result.to_python())
     else:
