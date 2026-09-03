@@ -100,6 +100,27 @@ class PeekleObject:
 
         return self.to_code()
 
+    def _children(self):
+        """Return the child :class:`PeekleObject` nodes of this node.
+
+        The default is no children; container subclasses override this.
+        """
+        return ()
+
+    def walk(self):
+        """Yield this node and, recursively, every descendant node."""
+        yield self
+        for child in self._children():
+            yield from child.walk()
+
+    def class_name(self):
+        """Return the fully-qualified class name this node refers to, if any.
+
+        Returns ``None`` for nodes that do not denote a class; subclasses that
+        wrap a class or class instance override this to return the dotted name.
+        """
+        return None
+
 
 class LiteralObject(PeekleObject):
     """A :class:`PeekleObject` that wraps a primitive literal value.
@@ -178,6 +199,11 @@ class DictObject(PeekleObject):
         """
         return {str(k): v.to_json(**kwargs) for k, v in self.value.items()}
 
+    def _children(self):
+        for k, v in self.value.items():
+            yield k
+            yield v
+
     def to_code(self):
         """Write a Python code representation of the dictionary."""
         return _block(
@@ -206,6 +232,9 @@ class ListOject(PeekleObject):
         """
         return [v.to_json(**kwargs) for v in self.value]
 
+    def _children(self):
+        return self.value
+
     def to_code(self):
         """Write a Python code representation of the list."""
         return _block("[", "]", [v.to_code() for v in self.value])
@@ -230,6 +259,9 @@ class TupleObject(PeekleObject):
             list: A plain Python list representing the tuple contents.
         """
         return [v.to_json(**kwargs) for v in self.value]
+
+    def _children(self):
+        return self.value
 
     def to_code(self):
         """Write a Python code representation of the tuple."""
@@ -257,6 +289,9 @@ class SetObject(PeekleObject):
             list: A plain Python list representing the set contents.
         """
         return [v.to_json(**kwargs) for v in self.value]
+
+    def _children(self):
+        return self.value
 
     def to_code(self):
         """Write a Python code representation of the set."""
@@ -298,9 +333,16 @@ class TypeObject(PeekleObject):
 
         return {"type": self.value.__name__, "module": self.value.__module__}
 
+    def _full_name(self):
+        return f"{self.value.__module__}.{self.value.__name__}"
+
+    def class_name(self):
+        """Return the dotted name of the wrapped type."""
+        return self._full_name()
+
     def to_code(self):
         """Write a Python code representation of the type."""
-        return f"{self.value.__module__}.{self.value.__name__}"
+        return self._full_name()
 
 
 class BytesObject(PeekleObject):
@@ -398,6 +440,13 @@ class ClassObject(PeekleObject):
         """
         return {self.name: self.members.to_json(**kwargs)}
 
+    def _children(self):
+        return (self.members,)
+
+    def class_name(self):
+        """Return the fully-qualified name of the instance's class."""
+        return self.name
+
     def to_code(self):
         """Convert to a python code representation of the deserialised instance."""
         return self.name + _block(
@@ -458,6 +507,9 @@ class FunctionObject(PeekleObject):
             "state": self.state.to_json(**kwargs),
         }
 
+    def _children(self):
+        return (self.args, self.kwargs, self.state)
+
     def to_code(self):
         """Write a Python code representation of the callable invocation."""
         items = [v.to_code() for v in self.args.value]
@@ -487,6 +539,9 @@ class PersistentObject(PeekleObject):
             dict: A ``{"id": ...}`` dict.
         """
         return {"id": self.id.to_json(**kwargs)}
+
+    def _children(self):
+        return (self.id,)
 
     def to_code(self):
         """Write a Python code representation of the persistent ID."""

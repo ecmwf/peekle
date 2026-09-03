@@ -50,6 +50,11 @@ def make_parser():
         action="store_true",
         help="Output the pickle contents as Python code",
     )
+    output.add_argument(
+        "--classes",
+        action="store_true",
+        help="List the classes referenced in the pickle, one per line, sorted",
+    )
 
     for name, help in JSON_OPTIONS.items():
         parser.add_argument(
@@ -79,7 +84,7 @@ def main(argv=None):
         for name in JSON_OPTIONS
     }
 
-    if args.python and any(kwargs.values()):
+    if (args.python or args.classes) and any(kwargs.values()):
         parser.error("formatting options are only supported with --json")
 
     if args.torch:
@@ -98,7 +103,11 @@ def main(argv=None):
         with open(args.path, "rb") as f:
             result = Peekle.parse(f)
 
-    if args.python:
+    if args.classes:
+        names = {name for node in result.walk() if (name := node.class_name())}
+        for name in sorted(names):
+            print(name)
+    elif args.python:
         print(result.to_python())
     else:
         print(json.dumps(result.to_json(**kwargs), indent=args.indent, default=str))
