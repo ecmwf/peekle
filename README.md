@@ -38,6 +38,57 @@ with open("model.pkl", "rb") as f:
 print(json.dumps(result.to_json(), indent=2))
 ```
 
+## Command line interface
+
+Installing the package also provides a `peekle` command (equivalently
+`python -m peekle`):
+
+```bash
+peekle model.pkl
+```
+
+```
+peekle [--torch] [--json | --python | --classes]
+       [--shorten-strings] [--shorten-bytes] [--bytes-count] [--function-calls]
+       [--indent N] PATH
+```
+
+| Option | Description |
+|--------|-------------|
+| `PATH` | Path to the pickle file to inspect (required). |
+| `--torch` | Treat `PATH` as a PyTorch checkpoint (a zip archive) and inspect the `data.pkl` it contains. |
+| `--json` | Output the pickle contents as JSON. This is the default. |
+| `--python` | Output the pickle contents as Python code instead of JSON. |
+| `--classes` | List the fully-qualified class names referenced in the pickle, one per line, sorted. |
+| `--shorten-strings` | Truncate strings longer than 20 characters with an ellipsis (`--json` only). |
+| `--shorten-bytes` | Show only the first 10 bytes of each `bytes` value (`--json` only). |
+| `--bytes-count` | Show only the length of each `bytes` value (`--json` only). |
+| `--function-calls` | Render callables and types as compact call strings (`--json` only). |
+| `--indent N` | Indentation level for JSON output (`--json` only, default: `2`). |
+
+`--json`, `--python` and `--classes` are mutually exclusive. The formatting
+options (`--shorten-strings`, `--shorten-bytes`, `--bytes-count`,
+`--function-calls`) are only valid with `--json`.
+
+Examples:
+
+```bash
+# Pretty-printed JSON (default)
+peekle model.pkl
+
+# Python-code representation
+peekle --python model.pkl
+
+# List every class the pickle refers to
+peekle --classes model.pkl
+
+# Compact JSON with shortened values
+peekle --json --shorten-strings --bytes-count model.pkl
+
+# Inspect the data.pkl inside a PyTorch checkpoint
+peekle --torch checkpoint.pt
+```
+
 ## API
 
 ### `Peekle.parse(file)`
@@ -67,6 +118,55 @@ tree:
 | `shorten_bytes` | `bool` | `False` | Show only the first 10 bytes of a `bytes` value |
 | `bytes_count` | `bool` | `False` | Replace `bytes` values with a human-readable count string, e.g. `"bytes(1,024)"` |
 | `function_calls` | `bool` | `False` | Render callable invocations and type references as compact dotted-name strings instead of structured dicts |
+
+______________________________________________________________________
+
+### `.to_python(**kwargs)`
+
+Every `PeekleObject` node exposes a `to_python()` method that returns a
+`black`-style, correctly-indented **Python source code** string reconstructing
+the deserialised value. This is what the CLI prints for `--python`.
+
+```python
+print(result.to_python())
+```
+
+______________________________________________________________________
+
+### `.walk()`
+
+Yield this node and, recursively, every descendant node in the tree. Useful for
+inspecting or collecting information across the whole object graph.
+
+```python
+for node in result.walk():
+    ...
+```
+
+______________________________________________________________________
+
+### `.class_name()`
+
+Return the fully-qualified (`module.ClassName`) name that this node refers to,
+or `None` for nodes that do not denote a class (literals, containers, etc.).
+
+______________________________________________________________________
+
+### `.class_names()`
+
+Return the sorted, de-duplicated list of every class name referenced anywhere in
+the tree (this node and all descendants). This is what the CLI prints for
+`--classes`.
+
+```python
+from peekle import Peekle
+
+with open("model.pkl", "rb") as f:
+    result = Peekle.parse(f)
+
+for name in result.class_names():
+    print(name)
+```
 
 ## Output format
 
