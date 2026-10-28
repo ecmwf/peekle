@@ -91,13 +91,14 @@ peekle --torch checkpoint.pt
 
 ## API
 
-### `Peekle.parse(file)`
+### `Peekle.parse(file, max_size=None)`
 
 Parse a binary pickle file and return the root `PeekleObject`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `file` | binary file-like | A file opened with `open("...", "rb")` or any object with a `.read()` method |
+| `max_size` | `int` or `None` | The largest pickle, in bytes, to read; a larger one raises `pickle.UnpicklingError`. Default: no limit |
 
 **Returns** `PeekleObject` — the root of the object tree.
 
@@ -136,7 +137,8 @@ ______________________________________________________________________
 ### `.walk()`
 
 Yield this node and, recursively, every descendant node in the tree. Useful for
-inspecting or collecting information across the whole object graph.
+inspecting or collecting information across the whole object graph. A node
+shared by several parents is yielded once.
 
 ```python
 for node in result.walk():
@@ -240,9 +242,15 @@ if isinstance(result, ClassObject):
 
 1. `Peekle.parse()` opens the pickle stream with `PeekleUnpickler`, a subclass
    of `pickle.Unpickler`.
-1. Whenever the unpickler encounters a class from outside the standard library,
+1. Whenever the unpickler encounters a class or function,
    `PeekleUnpickler.find_class()` dynamically creates a stub class instead of
-   importing the real one. Stubs are cached and reused across calls.
+   importing the real one, whatever its module, the standard library included.
+   A stub records how the pickle calls it. Stubs are cached and reused across
+   calls. The exceptions are a few plain data types (`dict`, `list`, `set`,
+   `frozenset`, `tuple`, `str`, `int`, `float`, `complex`, `bool`, `slice`,
+   `collections.OrderedDict` and `collections.defaultdict`), which resolve to
+   the real type, and `getattr` and the latin-1 `_codecs.encode` that protocol
+   2 uses to store `bytes`, which get stand-ins.
 1. The loaded Python object (which may contain stub instances, dicts, lists,
    etc.) is passed to `PeekleObjectMaker`, which walks the object graph and
    wraps every node in the appropriate `PeekleObject` subclass.
