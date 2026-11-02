@@ -11,10 +11,12 @@
 """peekle - Peek into pickle files without importing unknown dependencies.
 
 This module provides a safe way to inspect the structure and contents of
-pickle files.  Rather than importing the original classes that were pickled,
-peekle synthesises stub objects that mirror the original class hierarchy,
-allowing the pickle to be loaded and its structure explored without executing
-arbitrary code from the original modules.
+pickle files.  Rather than importing the original classes and functions that
+were pickled, peekle synthesises stub objects that mirror them and record how
+they were called, allowing the pickle to be loaded and its structure explored
+without executing any code the pickle names: not from the original modules,
+and not from the standard library either.  Only a few plain data types
+(:data:`SAFE_GLOBALS`) are resolved to the real type.
 
 The main entry point is :class:`Peekle`, whose :meth:`Peekle.parse` class
 method reads a binary file-like object and returns a :class:`PeekleObject`
@@ -32,21 +34,37 @@ Example::
     print(json.dumps(result.to_json(), indent=2))
 """
 
+import _compat_pickle
 import ast
 import base64
+import collections
 import contextlib
 import pickle
-import sys
 import textwrap
 import types
 
-builtin_modules = set(sys.builtin_module_names)
-stdlib_modules = set(sys.stdlib_module_names)
-extra_modules = {"__builtin__"}
+# The only globals resolved to the real object.  Each is a plain data type
+# whose construction runs no code of the pickle's choosing.  Every other
+# global, from the standard library and builtins included (``os.system``,
+# ``builtins.eval``, ...), becomes a stub, so a pickle can never call it.
+SAFE_GLOBALS = {
+    ("builtins", "bool"): bool,
+    ("builtins", "complex"): complex,
+    ("builtins", "dict"): dict,
+    ("builtins", "float"): float,
+    ("builtins", "frozenset"): frozenset,
+    ("builtins", "int"): int,
+    ("builtins", "list"): list,
+    ("builtins", "set"): set,
+    ("builtins", "slice"): slice,
+    ("builtins", "str"): str,
+    ("builtins", "tuple"): tuple,
+    ("collections", "OrderedDict"): collections.OrderedDict,
+    ("collections", "defaultdict"): collections.defaultdict,
+}
 
-# The complete set of module names that should be resolved normally by the
-# standard unpickler rather than replaced with stubs.
-BUILTIN_PACKAGES = builtin_modules | stdlib_modules | extra_modules
+# The encodings protocol 2 uses to pickle ``bytes`` (``_codecs.encode``).
+_LATIN1 = {"latin1", "latin-1", "latin_1", "iso-8859-1", "iso8859-1"}
 
 # One level of indentation used when emitting Python code.
 _INDENT = "    "
@@ -107,11 +125,20 @@ class PeekleObject:
         """
         return ()
 
-    def walk(self):
-        """Yield this node and, recursively, every descendant node."""
+    def walk(self, _seen=None):
+        """Yield this node and, recursively, every descendant node.
+
+        A node shared by several parents is yielded once, so a pickle that
+        references the same object many times cannot make the walk explode.
+        """
+        if _seen is None:
+            _seen = set()
+        if id(self) in _seen:
+            return
+        _seen.add(id(self))
         yield self
         for child in self._children():
-            yield from child.walk()
+            yield from child.walk(_seen)
 
     def class_name(self):
         """Return the fully-qualified class name this node refers to, if any.
@@ -862,19 +889,66 @@ class Attribute(PeekleObjectProvider):
         return AttributeObject(maker(self.name))
 
 
+def _is_stub(obj):
+    """Return ``True`` if *obj* is a stub class or an instance of one."""
+    return isinstance(obj, (StubMeta, Base))
+
+
+def _stub_name(obj):
+    """Return the dotted name of the stub class *obj* or of its class."""
+    cls = obj if isinstance(obj, StubMeta) else type(obj)
+    return f"{cls.__module__}.{cls.__name__.split('/')[0]}"
+
+
+class _BoundedReader:
+    """A read-only file wrapper that refuses to read more than *limit* bytes.
+
+    Args:
+        file: The binary file-like object to read from.
+        limit (int): The maximum number of bytes that may be read.
+    """
+
+    def __init__(self, file, limit):
+        self._file = file
+        self._left = limit
+
+    def _take(self, data):
+        self._left -= len(data)
+        if self._left < 0:
+            raise pickle.UnpicklingError("pickle is larger than the size limit")
+        return data
+
+    def read(self, size=-1):
+        if size is None or size < 0 or size > self._left + 1:
+            size = self._left + 1
+        return self._take(self._file.read(size))
+
+    def readline(self, size=-1):
+        if size is None or size < 0 or size > self._left + 1:
+            size = self._left + 1
+        return self._take(self._file.readline(size))
+
+    def readinto(self, buffer):
+        data = self.read(len(buffer))
+        buffer[: len(data)] = data
+        return len(data)
+
+
 class PeekleUnpickler(pickle.Unpickler):
-    """Custom :class:`pickle.Unpickler` that replaces unknown classes with
+    """Custom :class:`pickle.Unpickler` that replaces globals with
     synthesised stubs.
 
-    Standard :class:`~pickle.Unpickler` raises :class:`ModuleNotFoundError`
-    or :class:`AttributeError` when it cannot import the class that was
-    originally pickled.  ``PeekleUnpickler`` overrides :meth:`find_class` to
-    intercept unknown modules and return dynamically-created stub classes
-    instead, so the pickle stream can always be loaded without the original
-    packages installed.
+    Standard :class:`~pickle.Unpickler` imports every class or function the
+    pickle names, and calls the ones the pickle reduces with.  That needs the
+    original packages and runs code of the pickle's choosing.
+    ``PeekleUnpickler`` overrides :meth:`find_class` so that it never imports
+    anything: every global becomes a dynamically-created stub class that
+    records how it was called, so the pickle stream can be loaded safely
+    without the original packages installed.
 
-    Classes defined in builtins or the standard library are resolved normally
-    via the parent implementation.
+    The only exceptions are the plain data types in :data:`SAFE_GLOBALS`, and
+    safe stand-ins for ``builtins.getattr`` and ``_codecs.encode``, which
+    pickles use to reference a class attribute and to store ``bytes``.
 
     Class Attributes:
         modules (dict): Cache of synthetic :class:`types.ModuleType` objects,
@@ -944,22 +1018,91 @@ class PeekleUnpickler(pickle.Unpickler):
     def find_class(self, module_name, class_name):
         """Resolve a class name encountered in the pickle stream.
 
-        Standard library and built-in classes are resolved normally via the
-        parent :class:`~pickle.Unpickler`.  All other classes are handled by
-        :meth:`make_classes` and cached so that the same stub is reused for
-        every occurrence of the same type within a session.
+        Python 2 names (``__builtin__.long``) are first mapped to their
+        Python 3 equivalents.  The plain data types in :data:`SAFE_GLOBALS`
+        resolve to the real type, and ``builtins.getattr`` and
+        ``_codecs.encode`` to safe stand-ins.  Everything else, the standard
+        library included, is handled by :meth:`stub` and never imported.
 
         Args:
             module_name (str): The module that owns the class.
             class_name (str): The name of the class.
 
         Returns:
-            type: The real class (for stdlib) or a synthesised stub (for
-            everything else).
+            The real type, a safe stand-in, or a synthesised stub class.
         """
 
-        if module_name in BUILTIN_PACKAGES:
-            return super().find_class(module_name, class_name)
+        key = (module_name, class_name)
+        if key in _compat_pickle.NAME_MAPPING:
+            module_name, class_name = _compat_pickle.NAME_MAPPING[key]
+        elif module_name in _compat_pickle.IMPORT_MAPPING:
+            module_name = _compat_pickle.IMPORT_MAPPING[module_name]
+
+        key = (module_name, class_name)
+        if key in SAFE_GLOBALS:
+            return SAFE_GLOBALS[key]
+
+        if key == ("builtins", "getattr"):
+            return self._getattr
+
+        if key == ("_codecs", "encode"):
+            return self._encode
+
+        return self.stub(module_name, class_name)
+
+    def _getattr(self, obj, name, *default):
+        """Stand-in for ``builtins.getattr`` that never looks anything up.
+
+        Pickles reference a class attribute as ``getattr(cls, "name")``, e.g.
+        ``getattr(GraphTransformerFunction, "apply")`` for
+        :mod:`torch.autograd.Function` subclasses.  The real ``getattr`` would
+        let a pickle walk from any object to arbitrary code, so this returns
+        a member a stub instance was given, or else an :class:`Attribute`
+        placeholder.
+        """
+
+        if not isinstance(name, str):
+            raise pickle.UnpicklingError("getattr() with a non-string name")
+
+        if isinstance(obj, Base) and name in vars(obj):
+            return vars(obj)[name]
+
+        if _is_stub(obj):
+            return Attribute(f"{_stub_name(obj)}.{name}")
+
+        return Attribute(name)
+
+    def _encode(self, obj, encoding="utf-8", errors="strict"):
+        """Stand-in for ``_codecs.encode``, which protocol 2 uses for bytes.
+
+        Only latin-1 text is encoded.  Any other call is recorded by the
+        ``_codecs.encode`` stub instead of being made.
+        """
+
+        if (
+            isinstance(obj, str)
+            and isinstance(encoding, str)
+            and encoding.lower() in _LATIN1
+            and errors == "strict"
+        ):
+            return obj.encode("latin-1")
+
+        return self.stub("_codecs", "encode")(obj, encoding, errors)
+
+    def stub(self, module_name, class_name):
+        """Return the stub class for ``module_name.class_name``.
+
+        Stubs are created by :meth:`make_classes` and cached so that the same
+        stub is reused for every occurrence of the same type within a
+        session.
+
+        Args:
+            module_name (str): The module that owns the class.
+            class_name (str): The name of the class.
+
+        Returns:
+            type: The synthesised stub class.
+        """
 
         full = f"{module_name}.{class_name}"
         if full in self.classes:
@@ -1199,22 +1342,28 @@ class Peekle:
     """
 
     @classmethod
-    def parse(cls, file):
+    def parse(cls, file, max_size=None):
         """Parse a pickle file and return a :class:`PeekleObject` tree.
 
-        The file is loaded using :class:`PeekleUnpickler`, which safely stubs
-        out any unknown classes without importing the original modules.  The
-        resulting Python object is then converted to a :class:`PeekleObject`
-        hierarchy by :class:`PeekleObjectMaker`.
+        The file is loaded using :class:`PeekleUnpickler`, which stubs out
+        every class and function without importing the original modules or
+        calling them.  The resulting Python object is then converted to a
+        :class:`PeekleObject` hierarchy by :class:`PeekleObjectMaker`.
 
         Args:
             file: A binary file-like object open for reading (e.g. the
                 result of ``open("file.pkl", "rb")``).
+            max_size (int, optional): The largest pickle, in bytes, to read.
+                A larger one raises :class:`pickle.UnpicklingError`.  Defaults
+                to no limit.
 
         Returns:
             PeekleObject: The root of the object tree representing the
             pickle's contents.
         """
+
+        if max_size is not None:
+            file = _BoundedReader(file, max_size)
 
         obj = PeekleUnpickler(file).load()
         maker = PeekleObjectMaker()
